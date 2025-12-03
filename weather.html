@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open-Meteo 气象数据看板</title>
+    <!-- Tailwind CSS 用于样式 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js 用于图表绘制 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome 图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <!-- 顶部导航栏 -->
+    <nav class="bg-white shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+            <a href="index.html" class="text-gray-500 hover:text-blue-600 transition flex items-center">
+                <i class="fas fa-arrow-left mr-2"></i> 返回主页
+            </a>
+            <span class="font-semibold text-gray-700">我的数据科学项目</span>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <!-- 头部标题 -->
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-blue-600 mb-2"><i class="fas fa-cloud-sun-rain mr-2"></i>格点气象预测看板</h1>
+            <p class="text-gray-500">基于 Open-Meteo 数据源，提供未来24小时精准预测</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            
+            <!-- 左侧：控制面板 -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md h-fit">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">参数配置</h2>
+                
+                <!-- 坐标输入 -->
+                <div class="mb-6 space-y-3">
+                    <h3 class="font-medium text-gray-700">📍 地理位置</h3>
+                    <div>
+                        <label class="block text-sm text-gray-500 mb-1">纬度 (Latitude)</label>
+                        <input type="number" id="input-lat" value="30.5461" step="0.0001" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-500 mb-1">经度 (Longitude)</label>
+                        <input type="number" id="input-lon" value="114.3562" step="0.0001" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button onclick="useCurrentLocation()" class="text-xs text-blue-500 hover:text-blue-700 underline mt-1">
+                        <i class="fas fa-location-arrow"></i> 使用当前位置
+                    </button>
+                </div>
+
+                <!-- 气象参数选择 -->
+                <div class="mb-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-medium text-gray-700">📊 展示参数</h3>
+                        <div class="text-xs space-x-2">
+                            <button onclick="toggleAll(true)" class="text-blue-500 hover:underline">全选</button>
+                            <button onclick="toggleAll(false)" class="text-gray-500 hover:underline">清空</button>
+                        </div>
+                    </div>
+                    
+                    <div id="checkbox-container" class="space-y-2 max-h-64 overflow-y-auto pr-2 text-sm">
+                        <!-- 复选框将通过JS动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 提交按钮 -->
+                <button onclick="fetchData()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center">
+                    <span id="btn-text">生成图表</span>
+                    <i id="btn-spinner" class="fas fa-spinner fa-spin ml-2 hidden"></i>
+                </button>
+            </div>
+
+            <!-- 右侧：图表展示区域 -->
+            <div class="lg:col-span-3 space-y-6">
+                <!-- 主要图表容器 -->
+                <div class="bg-white p-6 rounded-xl shadow-md min-h-[400px]">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">趋势图表</h2>
+                        <span id="update-time" class="text-sm text-gray-400"></span>
+                    </div>
+                    <div class="relative h-96 w-full">
+                        <canvas id="weatherChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 数据表格预览 (可选) -->
+                <div class="bg-white p-6 rounded-xl shadow-md overflow-hidden">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">数据概览 (前5小时)</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm text-left text-gray-500">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50" id="table-head">
+                                <!-- 表头动态生成 -->
+                            </thead>
+                            <tbody id="table-body">
+                                <!-- 表格内容动态生成 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 脚本逻辑 -->
+    <script>
+        // --- 1. 配置与定义 ---
+        
+        // 定义气象变量及其元数据 (对应 Python 模块中的 HOURLY_VARIABLES)
+        const WEATHER_PARAMS = [
+            { id: "temperature_2m", label: "2米气温", unit: "°C", color: "#ef4444", default: true },
+            { id: "relative_humidity_2m", label: "相对湿度", unit: "%", color: "#3b82f6", default: true },
+            { id: "dew_point_2m", label: "露点温度", unit: "°C", color: "#6366f1", default: false },
+            { id: "apparent_temperature", label: "体感温度", unit: "°C", color: "#f97316", default: false },
+            { id: "surface_pressure", label: "地面气压", unit: "hPa", color: "#8b5cf6", default: false },
+            { id: "cloud_cover", label: "总云量", unit: "%", color: "#64748b", default: false },
+            { id: "wind_speed_10m", label: "10米风速", unit: "m/s", color: "#10b981", default: true },
+            { id: "direct_radiation", label: "直接辐射", unit: "W/m²", color: "#eab308", default: false },
+            { id: "diffuse_radiation", label: "散射辐射", unit: "W/m²", color: "#d97706", default: false },
+        ];
+
+        let chartInstance = null;
+
+        // --- 2. 初始化页面 ---
+        
+        window.onload = function() {
+            initCheckboxes();
+            // 页面加载时自动获取一次默认数据
+            fetchData();
+        };
+
+        function initCheckboxes() {
+            const container = document.getElementById('checkbox-container');
+            container.innerHTML = '';
+            
+            WEATHER_PARAMS.forEach(param => {
+                const div = document.createElement('div');
+                div.className = "flex items-center";
+                div.innerHTML = `
+                    <input type="checkbox" id="cb-${param.id}" value="${param.id}" 
+                           class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                           ${param.default ? 'checked' : ''}>
+                    <label for="cb-${param.id}" class="ml-2 text-gray-700 truncate cursor-pointer select-none flex-1">
+                        ${param.label} <span class="text-xs text-gray-400">(${param.unit})</span>
+                    </label>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // --- 3. 核心逻辑：获取数据 ---
+
+        async function fetchData() {
+            const lat = document.getElementById('input-lat').value;
+            const lon = document.getElementById('input-lon').value;
+            
+            // 获取选中的参数
+            const selectedParams = WEATHER_PARAMS.filter(p => document.getElementById(`cb-${p.id}`).checked);
+            
+            if (selectedParams.length === 0) {
+                alert("请至少选择一个气象参数！");
+                return;
+            }
+
+            const variables = selectedParams.map(p => p.id).join(',');
+            
+            // UI 加载状态
+            setLoading(true);
+
+            // 构建 API URL (完全复刻 Python 模块的逻辑)
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${variables}&models=ecmwf_ifs&timezone=Asia%2FShanghai&wind_speed_unit=ms&forecast_days=1`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("网络请求失败");
+                
+                const data = await response.json();
+                renderChart(data.hourly, selectedParams);
+                renderTable(data.hourly, selectedParams);
+                
+                document.getElementById('update-time').innerText = `更新时间: ${new Date().toLocaleTimeString()}`;
+            } catch (error) {
+                console.error(error);
+                alert("获取数据失败，请检查网络或坐标输入。");
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // --- 4. 渲染图表 ---
+
+        function renderChart(hourlyData, selectedParams) {
+            const ctx = document.getElementById('weatherChart').getContext('2d');
+            
+            // 提取时间轴 (格式化为小时)
+            const labels = hourlyData.time.map(t => t.split('T')[1]);
+
+            // 构建数据集
+            const datasets = selectedParams.map(param => {
+                return {
+                    label: `${param.label} (${param.unit})`,
+                    data: hourlyData[param.id],
+                    borderColor: param.color,
+                    backgroundColor: param.color + '20', // 添加透明度
+                    borderWidth: 2,
+                    tension: 0.3, // 曲线平滑度
+                    pointRadius: 2,
+                    yAxisID: param.unit === '%' ? 'y-percent' : 'y-default' // 简单的双轴处理
+                };
+            });
+
+            // 如果已有图表，销毁重建
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            titleColor: '#333',
+                            bodyColor: '#333',
+                            borderColor: '#ddd',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false }
+                        },
+                        'y-default': {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                        },
+                        'y-percent': {
+                            type: 'linear',
+                            display: datasets.some(d => d.yAxisID === 'y-percent'),
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { display: false } // 右侧轴不显示网格线
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- 5. 渲染表格 (仅展示前几行) ---
+        function renderTable(hourlyData, selectedParams) {
+            const thead = document.getElementById('table-head');
+            const tbody = document.getElementById('table-body');
+            
+            // 表头
+            let headerHTML = '<tr><th class="px-6 py-3">时间</th>';
+            selectedParams.forEach(p => {
+                headerHTML += `<th class="px-6 py-3">${p.label}</th>`;
+            });
+            headerHTML += '</tr>';
+            thead.innerHTML = headerHTML;
+
+            // 表体 (取前5条数据作为示例)
+            let bodyHTML = '';
+            for (let i = 0; i < 5; i++) {
+                bodyHTML += '<tr class="bg-white border-b hover:bg-gray-50">';
+                bodyHTML += `<td class="px-6 py-4 font-medium text-gray-900">${hourlyData.time[i].replace('T', ' ')}</td>`;
+                selectedParams.forEach(p => {
+                    bodyHTML += `<td class="px-6 py-4">${hourlyData[p.id][i]} ${p.unit}</td>`;
+                });
+                bodyHTML += '</tr>';
+            }
+            tbody.innerHTML = bodyHTML;
+        }
+
+        // --- 6. 辅助功能 ---
+
+        function toggleAll(checked) {
+            const inputs = document.querySelectorAll('#checkbox-container input');
+            inputs.forEach(input => input.checked = checked);
+        }
+
+        function setLoading(isLoading) {
+            const btnText = document.getElementById('btn-text');
+            const btnSpinner = document.getElementById('btn-spinner');
+            if (isLoading) {
+                btnText.innerText = "加载中...";
+                btnSpinner.classList.remove('hidden');
+            } else {
+                btnText.innerText = "生成图表";
+                btnSpinner.classList.add('hidden');
+            }
+        }
+        
+        function useCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    document.getElementById('input-lat').value = position.coords.latitude.toFixed(4);
+                    document.getElementById('input-lon').value = position.coords.longitude.toFixed(4);
+                    // 自动刷新
+                    fetchData();
+                }, () => {
+                    alert("无法获取您的位置，请手动输入。");
+                });
+            } else {
+                alert("您的浏览器不支持地理位置功能。");
+            }
+        }
+    </script>
+</body>
+</html>
